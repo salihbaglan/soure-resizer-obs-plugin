@@ -18,6 +18,7 @@
 #include <functional>
 #include <utility>
 #include "anchor-button.hpp"
+#include "rect-transform.hpp"
 
 // Global callback wrapper
 static void frontend_event_callback(enum obs_frontend_event event, void *param)
@@ -27,23 +28,49 @@ static void frontend_event_callback(enum obs_frontend_event event, void *param)
 }
 
 // Helper for recursive enumeration of selected items
-static void EnumSelectedItemsRecursive(obs_scene_t *scene, std::function<void(obs_sceneitem_t*)> callback) {
+struct EnumContext {
+    std::function<void(obs_sceneitem_t*, uint32_t, uint32_t)> callback;
+};
+
+static void EnumRecurse(obs_scene_t *scene, uint32_t pW, uint32_t pH, EnumContext *ctx) {
+    struct Params {
+        EnumContext *ctx;
+        uint32_t pW, pH;
+    } p = { ctx, pW, pH };
+
     obs_scene_enum_items(scene, [](obs_scene_t *, obs_sceneitem_t *item, void *param) {
-        auto *cb = reinterpret_cast<std::function<void(obs_sceneitem_t*)>*>(param);
-        
+        Params *pp = (Params*)param;
         if (obs_sceneitem_selected(item)) {
-            (*cb)(item);
+            pp->ctx->callback(item, pp->pW, pp->pH);
         }
-        
         if (obs_sceneitem_is_group(item)) {
-            // Use the correct API to get group's internal scene
-            obs_scene_t *groupScene = obs_sceneitem_group_get_scene(item);
-            if (groupScene) {
-                EnumSelectedItemsRecursive(groupScene, *cb);
-            }
+             obs_scene_t *gScene = obs_sceneitem_group_get_scene(item);
+             if (gScene) {
+                 obs_source_t *gs = obs_sceneitem_get_source(item);
+                 uint32_t gw = obs_source_get_width(gs);
+                 uint32_t gh = obs_source_get_height(gs);
+                 EnumRecurse(gScene, gw, gh, pp->ctx);
+             }
         }
         return true;
-    }, &callback);
+    }, &p);
+}
+
+// 1. New version with Parent Dimensions
+static void EnumSelectedItemsRecursive(obs_scene_t *scene, std::function<void(obs_sceneitem_t*, uint32_t, uint32_t)> callback) {
+    if (!scene) return;
+    obs_source_t *s = obs_scene_get_source(scene);
+    uint32_t w = obs_source_get_width(s);
+    uint32_t h = obs_source_get_height(s);
+    EnumContext ctx = { callback };
+    EnumRecurse(scene, w, h, &ctx);
+}
+
+// 2. Legacy overload for existing code
+static void EnumSelectedItemsRecursive(obs_scene_t *scene, std::function<void(obs_sceneitem_t*)> callback) {
+    EnumSelectedItemsRecursive(scene, [callback](obs_sceneitem_t *item, uint32_t, uint32_t) {
+        callback(item);
+    });
 }
 
 SourceResizerDock::SourceResizerDock(QWidget *parent) : QWidget(parent)
@@ -359,46 +386,33 @@ void SourceResizerDock::RefreshFromSelection()
     SubscribeToScene(scene);
 
     obs_sceneitem_t *selectedItem = nullptr;
+    uint32_t selectedParentW = 0;
+    uint32_t selectedParentH = 0;
     
-    // Use the proven recursive helper
-    std::function<void(obs_sceneitem_t*)> finder = [&](obs_sceneitem_t *item) {
+    // Find first selected item and its parent dims
+    EnumSelectedItemsRecursive(scene, [&](obs_sceneitem_t *item, uint32_t pW, uint32_t pH) {
         if (!selectedItem) {
             selectedItem = item;
+            selectedParentW = pW;
+            selectedParentH = pH;
         }
-    };
-    
-    EnumSelectedItemsRecursive(scene, finder);
+    });
 
     // Update UI
     if (selectedItem) {
         mainStack->setCurrentWidget(controlsWidget);
 
-        struct vec2 pos;
-        obs_sceneitem_get_pos(selectedItem, &pos);
+        RectTransform rt = RectTransform::LoadFromItem(selectedItem, selectedParentW, selectedParentH);
         
-        struct vec2 scale;
-        obs_sceneitem_get_scale(selectedItem, &scale);
-        
+        // We display Actual Size (visually correct) and Anchored Position (logically correct)
+        float displayW = rt.GetWidth((float)selectedParentW);
+        float displayH = rt.GetHeight((float)selectedParentH);
+        float displayX = rt.anchoredPosX;
+        float displayY = rt.anchoredPosY;
+
         obs_source_t *itemSource = obs_sceneitem_get_source(selectedItem);
-        float itemW = 0.0f;
-        float itemH = 0.0f;
-        const char* name = "";
-        bool visible = true;
-        
-        if (itemSource) {
-            itemW = (float)obs_source_get_width(itemSource) * scale.x;
-            itemH = (float)obs_source_get_height(itemSource) * scale.y;
-            name = obs_source_get_name(itemSource);
-            
-             // Handle bounds if present
-            if (obs_sceneitem_get_bounds_type(selectedItem) != OBS_BOUNDS_NONE) {
-                struct vec2 bounds;
-                obs_sceneitem_get_bounds(selectedItem, &bounds);
-                itemW = bounds.x;
-                itemH = bounds.y;
-            }
-        }
-        visible = obs_sceneitem_visible(selectedItem);
+        const char* name = itemSource ? obs_source_get_name(itemSource) : "";
+        bool visible = obs_sceneitem_visible(selectedItem);
 
         // Block signals to prevent feedback loop
         widthSpin->blockSignals(true);
@@ -408,10 +422,10 @@ void SourceResizerDock::RefreshFromSelection()
         nameEdit->blockSignals(true);
         visCheck->blockSignals(true);
 
-        widthSpin->setValue((int)itemW);
-        heightSpin->setValue((int)itemH);
-        xSpin->setValue((int)pos.x);
-        ySpin->setValue((int)pos.y);
+        widthSpin->setValue((int)displayW);
+        heightSpin->setValue((int)displayH);
+        xSpin->setValue((int)displayX);
+        ySpin->setValue((int)displayY);
         nameEdit->setText(QString::fromUtf8(name));
         visCheck->setChecked(visible);
 
@@ -434,64 +448,50 @@ void SourceResizerDock::handleResize()
 {
     obs_source_t *source = obs_frontend_get_current_scene();
     if (!source) return;
-
+    
     obs_scene_t *scene = obs_scene_from_source(source);
-    if (!scene) {
-        obs_source_release(source);
-        return;
-    }
+    if (!scene) { obs_source_release(source); return; }
 
-    std::function<void(obs_sceneitem_t*)> action = [&](obs_sceneitem_t *item) {
-        obs_source_t *itemSource = obs_sceneitem_get_source(item);
-        if (!itemSource) return;
-
+    EnumSelectedItemsRecursive(scene, [&](obs_sceneitem_t *item, uint32_t pW, uint32_t pH) {
+        RectTransform rt = RectTransform::LoadFromItem(item, pW, pH);
+        
         float targetW = (float)widthSpin->value();
         float targetH = (float)heightSpin->value();
         
-        if (obs_sceneitem_get_bounds_type(item) != OBS_BOUNDS_NONE) {
-             struct vec2 bounds;
-             bounds.x = targetW;
-             bounds.y = targetH;
-             obs_sceneitem_set_bounds(item, &bounds);
-        } else {
-            uint32_t sourceW = obs_source_get_width(itemSource);
-            uint32_t sourceH = obs_source_get_height(itemSource);
-            
-            if (sourceW == 0 || sourceH == 0) return;
-
-            struct vec2 newScale;
-            newScale.x = targetW / sourceW;
-            newScale.y = targetH / sourceH;
-
-            obs_sceneitem_set_scale(item, &newScale);
-        }
-    };
-
-    EnumSelectedItemsRecursive(scene, action);
+        // Calculate needed sizeDelta to achieve target size
+        float ax0 = (float)pW * rt.anchorMinX;
+        float ay0 = (float)pH * rt.anchorMinY;
+        float ax1 = (float)pW * rt.anchorMaxX;
+        float ay1 = (float)pH * rt.anchorMaxY;
+        float anchorRectW = ax1 - ax0;
+        float anchorRectH = ay1 - ay0;
+        
+        rt.sizeDeltaX = targetW - anchorRectW;
+        rt.sizeDeltaY = targetH - anchorRectH;
+        
+        rt.ApplyToSceneItem(item, pW, pH);
+    });
 
     obs_source_release(source);
 }
+
 
 void SourceResizerDock::handlePositionChange()
 {
     obs_source_t *source = obs_frontend_get_current_scene();
     if (!source) return;
-
+    
     obs_scene_t *scene = obs_scene_from_source(source);
-    if (!scene) {
-        obs_source_release(source);
-        return;
-    }
+    if (!scene) { obs_source_release(source); return; }
 
-    std::function<void(obs_sceneitem_t*)> action = [&](obs_sceneitem_t *item) {
-        struct vec2 newPos;
-        newPos.x = (float)xSpin->value();
-        newPos.y = (float)ySpin->value();
-
-        obs_sceneitem_set_pos(item, &newPos);
-    };
-
-    EnumSelectedItemsRecursive(scene, action);
+    EnumSelectedItemsRecursive(scene, [&](obs_sceneitem_t *item, uint32_t pW, uint32_t pH) {
+        RectTransform rt = RectTransform::LoadFromItem(item, pW, pH);
+        
+        rt.anchoredPosX = (float)xSpin->value();
+        rt.anchoredPosY = (float)ySpin->value();
+        
+        rt.ApplyToSceneItem(item, pW, pH);
+    });
 
     obs_source_release(source);
 }
@@ -512,95 +512,194 @@ void SourceResizerDock::ApplyAnchorPreset(AnchorH h, AnchorV v)
     obs_scene_t *scene = obs_scene_from_source(source);
     if (!scene) { obs_source_release(source); return; }
 
-    uint32_t canvasW = obs_source_get_width(source);
-    uint32_t canvasH = obs_source_get_height(source);
-    
     Qt::KeyboardModifiers mods = QApplication::keyboardModifiers();
-    bool setPivot = (mods & Qt::ShiftModifier);
-    bool setPosition = (mods & Qt::AltModifier);
+    bool shiftHeld = (mods & Qt::ShiftModifier);
+    bool altHeld = (mods & Qt::AltModifier);
     
-    std::function<void(obs_sceneitem_t*)> action = [&](obs_sceneitem_t *item) {
-        // 1. alignment logic (Shift)
-        uint32_t newAlign = 0;
-        if (h == AnchorH::Left) newAlign |= OBS_ALIGN_LEFT;
-        else if (h == AnchorH::Right) newAlign |= OBS_ALIGN_RIGHT;
-        else if (h == AnchorH::Center) newAlign |= 0; // Center is 0
+    // Get preset anchor/pivot values
+    AnchorPreset preset = AnchorPreset::FromEnums(static_cast<int>(h), static_cast<int>(v));
+    
+    // Use the new helper that provides parent dimensions
+    EnumSelectedItemsRecursive(scene, [&](obs_sceneitem_t *item, uint32_t parentW, uint32_t parentH) {
         
-        if (v == AnchorV::Top) newAlign |= OBS_ALIGN_TOP;
-        else if (v == AnchorV::Bottom) newAlign |= OBS_ALIGN_BOTTOM;
-
-        if (setPivot) {
-             obs_sceneitem_set_alignment(item, newAlign);
+        // Load current RectTransform state (inferred from live OBS state)
+        RectTransform rt = RectTransform::LoadFromItem(item, parentW, parentH);
+        
+        if (!shiftHeld && !altHeld) {
+            // === Normal click: Change anchor, preserve world rect position ===
+            float oldX, oldY, oldW, oldH;
+            rt.CalculateFinalRect((float)parentW, (float)parentH, oldX, oldY, oldW, oldH);
+            float oldPivotWorldX = oldX + oldW * rt.pivotX;
+            float oldPivotWorldY = oldY + oldH * rt.pivotY;
+            
+            // Apply new anchors
+            rt.anchorMinX = preset.minX;
+            rt.anchorMinY = preset.minY;
+            rt.anchorMaxX = preset.maxX;
+            rt.anchorMaxY = preset.maxY;
+            
+            // Calculate new anchor rect
+            float ax0 = (float)parentW * rt.anchorMinX;
+            float ay0 = (float)parentH * rt.anchorMinY;
+            float ax1 = (float)parentW * rt.anchorMaxX;
+            float ay1 = (float)parentH * rt.anchorMaxY;
+            float anchorRectW = ax1 - ax0;
+            float anchorRectH = ay1 - ay0;
+            
+            // Recalculate sizeDelta to maintain old size
+            rt.sizeDeltaX = oldW - anchorRectW;
+            rt.sizeDeltaY = oldH - anchorRectH;
+            
+            // Calculate new anchor pivot point
+            float newAnchorPivotX = ax0 + anchorRectW * rt.pivotX;
+            float newAnchorPivotY = ay0 + anchorRectH * rt.pivotY;
+            
+            // Recalculate anchoredPosition to keep pivot at same world pos
+            rt.anchoredPosX = oldPivotWorldX - newAnchorPivotX;
+            rt.anchoredPosY = oldPivotWorldY - newAnchorPivotY;
+            
+            rt.ApplyToSceneItem(item, parentW, parentH);
         }
-
-        // 2. Position/Size Logic (Alt)
-        if (setPosition) {
-             bool stretchX = (h == AnchorH::Stretch);
-             bool stretchY = (v == AnchorV::Stretch);
-
-             // Current dimensions
-             struct vec2 scale;
-             obs_sceneitem_get_scale(item, &scale);
-             obs_source_t *itemSource = obs_sceneitem_get_source(item);
-             float currentW = obs_source_get_width(itemSource) * scale.x;
-             float currentH = obs_source_get_height(itemSource) * scale.y;
-             
-             // If bounds exist, use them
-             if (obs_sceneitem_get_bounds_type(item) != OBS_BOUNDS_NONE) {
-                  struct vec2 b;
-                  obs_sceneitem_get_bounds(item, &b);
-                  currentW = b.x;
-                  currentH = b.y;
-             }
-
-             // Calculate Target Size
-             float targetW = currentW;
-             float targetH = currentH;
-             
-             if (stretchX || stretchY) {
-                 // Ensure bounds enabled
-                 if (obs_sceneitem_get_bounds_type(item) == OBS_BOUNDS_NONE) {
-                      obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_STRETCH);
-                 }
-                 if (stretchX) targetW = (float)canvasW;
-                 if (stretchY) targetH = (float)canvasH;
+        else if (shiftHeld && !altHeld) {
+            // === Shift: Change anchor + move to anchor position ===
+            rt.anchorMinX = preset.minX;
+            rt.anchorMinY = preset.minY;
+            rt.anchorMaxX = preset.maxX;
+            rt.anchorMaxY = preset.maxY;
+            
+            // Reset offset (snap to anchor)
+            rt.anchoredPosX = 0.0f;
+            rt.anchoredPosY = 0.0f;
+            
+            rt.ApplyToSceneItem(item, parentW, parentH);
+        }
+        else if (shiftHeld && altHeld) {
+            // === Shift+Alt: Full preset reset (anchor + pivot + pos + size) ===
+            rt.anchorMinX = preset.minX;
+            rt.anchorMinY = preset.minY;
+            rt.anchorMaxX = preset.maxX;
+            rt.anchorMaxY = preset.maxY;
+            rt.pivotX = preset.pivotX;
+            rt.pivotY = preset.pivotY;
+            
+            // Reset offset
+            rt.anchoredPosX = 0.0f;
+            rt.anchoredPosY = 0.0f;
+            
+            // Reset size: For stretch axes, sizeDelta=0 implies filling the anchor rect.
+            if (preset.minX != preset.maxX) {
+                rt.sizeDeltaX = 0.0f;  // Horizontal stretch
+            } else {
+                // For fixed axes, reset to 'default' or keep current?
+                // Unity resets to 100x100 usually. Let's try to keep meaningful size if possible, 
+                // but "reset" implies reset. Let's use 100 if we can't determine.
+                // Or better: Reset means "match preset". 
+                // We'll set arbitrary default size 200px if it was stretched before, 
+                // or keep current size if it's already fixed? 
+                // User said "Shift+Alt ... sizeDelta value 0".
+                // If I set sizeDelta to 0 for a non-stretch anchor, size becomes 0! That's bad (invisible).
+                
+                // Let's use the current "Width" of the item as the delta.
+                float currentW = rt.GetWidth((float)parentW);
+                rt.sizeDeltaX = (currentW > 1.0f) ? currentW : 200.0f;
+            }
+            
+            if (preset.minY != preset.maxY) {
+                rt.sizeDeltaY = 0.0f;  // Vertical stretch
+            } else {
+                float currentH = rt.GetHeight((float)parentH);
+                rt.sizeDeltaY = (currentH > 1.0f) ? currentH : 200.0f;
+            }
+            
+            rt.ApplyToSceneItem(item, parentW, parentH);
+        }
+        else if (altHeld && !shiftHeld) {
+            // === Alt only: Just move to position (legacy behavior) ===
+            rt.anchoredPosX = 0.0f;
+            rt.anchoredPosY = 0.0f;
+            
+            // Temporarily apply preset anchors for calculation (simulate "what if we were anchored here")
+            // BUT we don't change the actual anchors stored in 'rt'.
+            // Wait, legacy behavior sets position based on those anchors? 
+            // In Unity, Alt-click sets position BUT NOT ANCHORS. 
+            // It moves the pivot to the anchor point defined by the preset.
+            // So we calculate where that point is, and move there.
+            
+            // Calculate usage of preset anchors
+            float ax0 = (float)parentW * preset.minX;
+            float ay0 = (float)parentH * preset.minY;
+            float ax1 = (float)parentW * preset.maxX;
+            float ay1 = (float)parentH * preset.maxY;
+            float anchorRectW = ax1 - ax0;
+            float anchorRectH = ay1 - ay0;
+            
+            // Target anchor pivot position
+            float targetPivotX = ax0 + anchorRectW * rt.pivotX;
+            float targetPivotY = ay0 + anchorRectH * rt.pivotY;
+            
+            // Current Pivot World Pos
+            float currentX, currentY, currentW, currentH;
+            rt.CalculateFinalRect((float)parentW, (float)parentH, currentX, currentY, currentW, currentH);
+            float currentPivotWorldX = currentX + currentW * rt.pivotX;
+            float currentPivotWorldY = currentY + currentH * rt.pivotY;
+            
+            // We want to move 'currentPivotWorld' to 'targetPivot'.
+            // anchoredPos = (TargetPos - AnchorPivot) ... 
+            // If we don't change anchors, 'AnchorPivot' is based on OLD anchors.
+            // anchoredPos = targetPivot - oldAnchorPivot.
+            
+            // Wait, Unity Alt Click: "Sets position".
+            // If I Alt-click "Top Left", it moves the object to Top-Left corner.
+            // It modifies 'anchoredPosition' such that the object is visually at Top Left.
+            // It does NOT change anchors.
+            
+            float oldAx0 = (float)parentW * rt.anchorMinX;
+            float oldAy0 = (float)parentH * rt.anchorMinY;
+            float oldAx1 = (float)parentW * rt.anchorMaxX;
+            float oldAy1 = (float)parentH * rt.anchorMaxY;
+            float oldAnchorRectW = oldAx1 - oldAx0;
+            float oldAnchorRectH = oldAy1 - oldAy0;
+            
+            float oldAnchorPivotX = oldAx0 + oldAnchorRectW * rt.pivotX;
+            float oldAnchorPivotY = oldAy0 + oldAnchorRectH * rt.pivotY;
+            
+            // We want the object's pivot to be at targetPivotX/Y
+            // WorldPivot = OldAnchorPivot + NewAnchoredPos
+            // NewAnchoredPos = TargetPivot - OldAnchorPivot
+            
+            rt.anchoredPosX = targetPivotX - oldAnchorPivotX;
+            rt.anchoredPosY = targetPivotY - oldAnchorPivotY;
+            
+            // Special case: If preset is stretch, we also resize?
+            // Unity Alt-Click on Stretch Preset: Resizes to fill that dimension.
+            // So if I accept resizing...
+            if (preset.minX != preset.maxX) {
+                // Resize width to match parent width
+                // sizeDeltaX = width - anchorRectW
+                // We want width = parentW
+                // So sizeDeltaX = parentW - anchorRectW
+                 rt.sizeDeltaX = (float)parentW - oldAnchorRectW;
                  
-                 struct vec2 bounds = { targetW, targetH };
-                 obs_sceneitem_set_bounds(item, &bounds);
-             }
-
-             // Calculate Target Top-Left Position
-             float boxX = 0;
-             float boxY = 0;
-
-             // X Axis
-             if (h == AnchorH::Left) boxX = 0;
-             else if (h == AnchorH::Right) boxX = canvasW - targetW;
-             else if (h == AnchorH::Center) boxX = (canvasW - targetW) / 2.0f;
-             else if (h == AnchorH::Stretch) boxX = 0; // Full width starts at 0
-
-             // Y Axis
-             if (v == AnchorV::Top) boxY = 0;
-             else if (v == AnchorV::Bottom) boxY = canvasH - targetH;
-             else if (v == AnchorV::Middle) boxY = (canvasH - targetH) / 2.0f;
-             else if (v == AnchorV::Stretch) boxY = 0; // Full height starts at 0
-
-             // Convert Top-Left boxX/boxY to Alignment Point Position
-             uint32_t align = obs_sceneitem_get_alignment(item);
-             struct vec2 finalPos = { boxX, boxY };
-
-             // Add offset based on alignment
-             if (align & OBS_ALIGN_RIGHT) finalPos.x += targetW;
-             else if (!(align & OBS_ALIGN_LEFT)) finalPos.x += targetW / 2.0f; // Center
-
-             if (align & OBS_ALIGN_BOTTOM) finalPos.y += targetH;
-             else if (!(align & OBS_ALIGN_TOP)) finalPos.y += targetH / 2.0f; // Center
-
-             obs_sceneitem_set_pos(item, &finalPos);
+                 // And we also align X to 0? 
+                 // If we stretch, position should center.
+                 // anchoredPos for X becomes 0 if fully centered?
+                 // Let's stick to standard "Fill" logic: 0 offset from anchors.
+                 // But we aren't changing anchors!
+                 // If anchors are center, and we stretch:
+                 // Width becomes parentW. Pivot is center.
+                 // Position is center.
+                 // So yes, anchoredPosX = 0.
+            }
+            if (preset.minY != preset.maxY) {
+                 rt.sizeDeltaY = (float)parentH - oldAnchorRectH;
+            }
+            
+            // Re-apply
+            rt.ApplyToSceneItem(item, parentW, parentH);
         }
-    };
-
-    EnumSelectedItemsRecursive(scene, action);
+    });
 
     obs_source_release(source);
+    RefreshFromSelection();
 }
+

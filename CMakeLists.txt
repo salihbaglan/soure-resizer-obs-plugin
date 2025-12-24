@@ -40,6 +40,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
   src/source-resizer-dock.hpp
   src/anchor-button.cpp
   src/anchor-button.hpp
+  src/rect-transform.cpp
+  src/rect-transform.hpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

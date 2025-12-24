@@ -1,4 +1,5 @@
 #include "anchor-button.hpp"
+#include "rect-transform.hpp"
 #include <QPainter>
 #include <QStyleOption>
 
@@ -8,6 +9,11 @@ AnchorButton::AnchorButton(AnchorH h, AnchorV v, QWidget *parent)
     setFixedSize(32, 32);
     setCheckable(true);
     setAutoExclusive(true);
+}
+
+AnchorPreset AnchorButton::GetPresetValues() const
+{
+    return AnchorPreset::FromEnums(static_cast<int>(hAlign), static_cast<int>(vAlign));
 }
 
 void AnchorButton::paintEvent(QPaintEvent *)

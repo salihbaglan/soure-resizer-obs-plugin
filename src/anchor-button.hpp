@@ -6,6 +6,9 @@
 enum class AnchorH { Left, Center, Right, Stretch };
 enum class AnchorV { Top, Middle, Bottom, Stretch };
 
+// Forward declaration
+struct AnchorPreset;
+
 class AnchorButton : public QPushButton {
     Q_OBJECT
 
@@ -14,6 +17,9 @@ public:
 
     AnchorH horizontal() const { return hAlign; }
     AnchorV vertical() const { return vAlign; }
+    
+    // Get Unity-style anchor preset values
+    AnchorPreset GetPresetValues() const;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
