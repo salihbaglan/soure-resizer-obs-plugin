@@ -1,0 +1,78 @@
+# Build directories
+build/
+build_x64/
+build_x86/
+release/
+out/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CMakeSettings.json
+*.cmake.in
+compile_commands.json
+
+# Dependencies (managed by build system)
+.deps/
+
+# IDE and editor files
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
+.idea/
+
+# Compiled files
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Visual Studio specific
+Debug/
+Release/
+x64/
+x86/
+*.VC.db
+*.VC.VC.opendb
+ipch/
+*.opensdf
+*.sdf
+*.cachefile
+*.aps
+*.ncb
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Package files
+*.zip
+*.tar.gz
+*.7z
+
+# Backup files
+*~
+*.bak
+*.swp
+*.swo

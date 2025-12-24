@@ -1,0 +1,76 @@
+#pragma once
+
+#include <QWidget>
+#include <obs-module.h>
+#include <obs-frontend-api.h>
+#include <vector>
+#include "anchor-button.hpp"
+
+class QSpinBox;
+class QPushButton;
+class QLabel;
+class QStackedLayout;
+class QLineEdit;
+class QCheckBox;
+
+class SourceResizerDock : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit SourceResizerDock(QWidget *parent = nullptr);
+    ~SourceResizerDock() override;
+
+    // Called by global event callback or self-registered
+    void HandleFrontendEvent(enum obs_frontend_event event);
+
+public slots:
+    void RefreshFromSelection();
+
+protected:
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
+
+private slots:
+    void handleResize();
+    void handlePositionChange();
+    void onAnchorClicked();
+    void updateModifierLabels();
+    void toggleAnchorPopup();
+    void handleRenaming();
+    void handleVisibility(int state);
+
+private:
+    void SubscribeToScene(obs_scene_t *scene);
+    void UnsubscribeFromScene();
+    void ApplyAnchorPreset(AnchorH h, AnchorV v);
+    void CreateAnchorPopup();
+    
+    // Static callbacks for OBS signals
+    static void OBSSceneItemSignal(void *data, calldata_t *cd);
+
+    QStackedLayout *mainStack;
+    QWidget *controlsWidget;
+    QLabel *noSelectionLabel;
+    
+    // Main UI Elements
+    QLineEdit *nameEdit;
+    QCheckBox *visCheck;
+    AnchorButton *mainAnchorBtn; 
+    
+    QSpinBox *widthSpin;
+    QSpinBox *heightSpin;
+    QSpinBox *xSpin;
+    QSpinBox *ySpin;
+    
+    // Popup Elements
+    QWidget *anchorPopup;
+    
+    // Track multiple sources (Main scene + Groups)
+    std::vector<obs_source_t*> trackedSources;
+    
+    void SubscribeRecursive(obs_scene_t *scene);
+    void UnsubscribeAll();
+    
+    QLabel *shiftLabel;
+    QLabel *altLabel;
+};
