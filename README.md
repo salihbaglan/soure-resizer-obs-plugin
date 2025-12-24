@@ -1,59 +1,97 @@
-# OBS Plugin Template
+# OBS Source Resizer Dock
 
-## Introduction
+A dockable panel plugin for OBS Studio that provides quick access to source transform controls.
 
-The plugin template is meant to be used as a starting point for OBS Studio plugin development. It includes:
+![OBS Studio](https://img.shields.io/badge/OBS%20Studio-30+-302E31?logo=obsstudio&logoColor=white)
+![License](https://img.shields.io/badge/License-GPLv2-blue)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-* Boilerplate plugin source code
-* A CMake project file
-* GitHub Actions workflows and repository actions
+## Features
 
-## Supported Build Environments
+- 📐 **Quick Transform Controls** - Resize and reposition sources directly from a dock panel
+- 🎯 **Anchor Presets** - Unity-style anchor system for precise positioning
+- 👁️ **Visibility Toggle** - Quickly show/hide selected sources
+- ✏️ **Rename Sources** - Edit source names without opening properties
+- 📦 **Group Support** - Works with sources nested inside groups
+- ⌨️ **Modifier Keys** - Hold Shift for pivot, Alt for position presets
 
-| Platform  | Tool   |
-|-----------|--------|
-| Windows   | Visual Studio 17 2022 |
-| macOS     | XCode 16.0 |
-| Windows, macOS  | CMake 3.30.5 |
-| Ubuntu 24.04 | CMake 3.28.3 |
-| Ubuntu 24.04 | `ninja-build` |
-| Ubuntu 24.04 | `pkg-config`
-| Ubuntu 24.04 | `build-essential` |
+## Screenshot
 
-## Quick Start
+*Select a source in your scene to edit its transform properties*
 
-An absolute bare-bones [Quick Start Guide](https://github.com/obsproject/obs-plugintemplate/wiki/Quick-Start-Guide) is available in the wiki.
+## Installation
 
-## Documentation
+### Windows
+1. Download the latest release from [Releases](../../releases)
+2. Extract `obs-source-resizer-dock.dll` to your OBS plugins folder:
+   - `C:\Program Files\obs-studio\obs-plugins\64bit\`
+3. Restart OBS Studio
+4. Enable the dock via **View → Docks → Source Resizer**
 
-All documentation can be found in the [Plugin Template Wiki](https://github.com/obsproject/obs-plugintemplate/wiki).
+### macOS
+1. Download the latest release
+2. Copy to `/Library/Application Support/obs-studio/plugins/`
+3. Restart OBS Studio
 
-Suggested reading to get up and running:
+### Linux
+1. Download the latest release
+2. Copy to `~/.config/obs-studio/plugins/`
+3. Restart OBS Studio
 
-* [Getting started](https://github.com/obsproject/obs-plugintemplate/wiki/Getting-Started)
-* [Build system requirements](https://github.com/obsproject/obs-plugintemplate/wiki/Build-System-Requirements)
-* [Build system options](https://github.com/obsproject/obs-plugintemplate/wiki/CMake-Build-System-Options)
+## Usage
 
-## GitHub Actions & CI
+1. Open the dock via **View → Docks → Source Resizer**
+2. Select a source in your scene
+3. Use the controls to adjust:
+   - **Position X/Y** - Set exact pixel coordinates
+   - **Width/Height** - Resize the source
+   - **Visibility checkbox** - Toggle source visibility
+   - **Name field** - Rename the source
 
-Default GitHub Actions workflows are available for the following repository actions:
+### Anchor Presets
 
-* `push`: Run for commits or tags pushed to `master` or `main` branches.
-* `pr-pull`: Run when a Pull Request has been pushed or synchronized.
-* `dispatch`: Run when triggered by the workflow dispatch in GitHub's user interface.
-* `build-project`: Builds the actual project and is triggered by other workflows.
-* `check-format`: Checks CMake and plugin source code formatting and is triggered by other workflows.
+Click the anchor button to open the preset grid:
+- **Normal click** - No action (select preset first)
+- **Shift + click** - Set source pivot/alignment
+- **Alt + click** - Snap source to canvas position
+- **Shift + Alt + click** - Set both pivot and position
 
-The workflows make use of GitHub repository actions (contained in `.github/actions`) and build scripts (contained in `.github/scripts`) which are not needed for local development, but might need to be adjusted if additional/different steps are required to build the plugin.
+## Building from Source
 
-### Retrieving build artifacts
+### Requirements
+- CMake 3.28+
+- OBS Studio 30+ source/libraries
+- Qt 6
+- C++17 compatible compiler
 
-Successful builds on GitHub Actions will produce build artifacts that can be downloaded for testing. These artifacts are commonly simple archives and will not contain package installers or installation programs.
+### Build Steps
 
-### Building a Release
+```bash
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/obs-source-resizer-dock.git
+cd obs-source-resizer-dock
 
-To create a release, an appropriately named tag needs to be pushed to the `main`/`master` branch using semantic versioning (e.g., `12.3.4`, `23.4.5-beta2`). A draft release will be created on the associated repository with generated installer packages or installation programs attached as release artifacts.
+# Configure
+cmake --preset windows-x64  # or macos, linux
 
-## Signing and Notarizing on macOS
+# Build
+cmake --build build_x64 --config Release
+```
 
-Basic concepts of codesigning and notarization on macOS are explained in the correspodning [Wiki article](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS) which has a specific section for the [GitHub Actions setup](https://github.com/obsproject/obs-plugintemplate/wiki/Codesigning-On-macOS#setting-up-code-signing-for-github-actions).
+Or use the provided batch file on Windows:
+```bash
+setup_and_build.bat
+```
+
+## License
+
+This project is licensed under the GNU General Public License v2.0 - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Acknowledgments
+
+- Built using the [OBS Plugin Template](https://github.com/obsproject/obs-plugintemplate)
+- Inspired by Unity's RectTransform component
